@@ -230,7 +230,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 		// that it is a SELECT statement and provide clear error messages before embedding it
 		// in the CREATE TEMP MODEL statement (which is also validated via dry run below).
 		if len(source.BigQueryAllowedDatasets()) > 0 {
-			logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, inputData))
+			logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(inputData)))
 			dryRunJob, validationErr := bqutil.ValidateQueryAgainstAllowedDatasets(ctx, restService, bqClient.Project(), bqClient.Location, inputData, nil, connProps, source, source.GetMaximumBytesBilled(), false)
 			if validationErr != nil {
 				return nil, validationErr
@@ -250,7 +250,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 		inputDataSource,
 	)
 
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, createModelSQL))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(createModelSQL)))
 
 	createModelQuery := bqClient.Query(createModelSQL)
 	createModelQuery.Labels = map[string]string{"mcp-toolbox-tool": resourceType}
@@ -307,7 +307,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 
 	getInsightsSQL := fmt.Sprintf("SELECT * FROM ML.GET_INSIGHTS(MODEL %s)", modelID)
 	insightsConnProps := []*bigqueryapi.ConnectionProperty{{Key: "session_id", Value: sessionID}}
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, getInsightsSQL))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(getInsightsSQL)))
 
 	resp, err := source.RunSQL(ctx, bqClient, getInsightsSQL, "SELECT", nil, insightsConnProps, map[string]string{"mcp-toolbox-tool": resourceType})
 	if err != nil {

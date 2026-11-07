@@ -420,6 +420,13 @@ func initializeTools(ctx context.Context, cfg ServerConfig, sourcesMap map[strin
 				trace.WithAttributes(attribute.String("tool_name", name)),
 			)
 			defer span.End()
+			if b, ok := tc.(tools.ToolBinder); ok {
+				bound, err := b.BindTools(cfg.ToolConfigs)
+				if err != nil {
+					return nil, fmt.Errorf("unable to initialize tool %q: %w", name, err)
+				}
+				tc = bound
+			}
 			t, err := tc.Initialize(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("unable to initialize tool %q: %w", name, err)
@@ -449,7 +456,11 @@ func initializeTools(ctx context.Context, cfg ServerConfig, sourcesMap map[strin
 			continue
 		}
 
-		toolsMap[name] = t
+		guarded, err := guardTool(t, tc, src, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("tool %q: %w", name, err)
+		}
+		toolsMap[name] = guarded
 	}
 	toolNames := make([]string, 0, len(toolsMap))
 	for name := range toolsMap {

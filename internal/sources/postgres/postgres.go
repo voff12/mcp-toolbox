@@ -22,6 +22,7 @@ import (
 	"time"
 
 	"github.com/goccy/go-yaml"
+	"github.com/googleapis/mcp-toolbox/internal/queryguard"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/sources/sqlcommenter"
 	"github.com/googleapis/mcp-toolbox/internal/util"
@@ -65,6 +66,8 @@ type Config struct {
 	// take, in seconds. When unset, no timeout is applied and connection behavior
 	// is unchanged.
 	ConnectTimeout *int `yaml:"connectTimeout" validate:"omitempty,gte=1"`
+	// QueryGuard optionally bounds concurrency, duration and result size.
+	QueryGuard *queryguard.Config `yaml:"queryGuard"`
 }
 
 func (r Config) SourceConfigType() string {
@@ -72,7 +75,12 @@ func (r Config) SourceConfigType() string {
 }
 
 func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.Source, error) {
-	pool, err := initPostgresConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryParams, r.QueryExecMode, r.ConnectTimeout)
+	guard, err := queryguard.New(r.QueryGuard)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: %w", r.Name, err)
+	}
+
+	pool, err := initPostgresConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, guard.PostgresParams(r.QueryParams), r.QueryExecMode, r.ConnectTimeout)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -86,15 +94,25 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 	s := &Source{
 		Config: r,
 		Pool:   pool,
+		guard:  guard,
 	}
 	return s, nil
 }
 
-var _ sources.Source = &Source{}
+var (
+	_ sources.Source      = &Source{}
+	_ queryguard.Provider = &Source{}
+)
 
 type Source struct {
 	Config
-	Pool *pgxpool.Pool
+	Pool  *pgxpool.Pool
+	guard *queryguard.Guard
+}
+
+// GetQueryGuard implements queryguard.Provider.
+func (s *Source) GetQueryGuard() *queryguard.Guard {
+	return s.guard
 }
 
 func (s *Source) IsReadOnly() bool {
@@ -114,8 +132,8 @@ func (s *Source) PostgresPool() *pgxpool.Pool {
 }
 
 func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (any, error) {
-	statement = sqlcommenter.PrependComment(ctx, statement, SourceType, s.SQLCommenter)
-	results, err := s.PostgresPool().Query(ctx, statement, params...)
+	wire := sqlcommenter.PrependComment(ctx, statement, SourceType, s.SQLCommenter)
+	results, err := queryguard.QueryPgx(ctx, s.PostgresPool(), statement, wire, params...)
 	if err != nil {
 		return nil, fmt.Errorf("unable to execute query: %w", err)
 	}

@@ -192,7 +192,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 		// that it is a SELECT statement and provide clear error messages before embedding it
 		// in the AI.FORECAST query (which is also validated via dry run below).
 		if len(source.BigQueryAllowedDatasets()) > 0 {
-			logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, historyData))
+			logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(historyData)))
 			dryRunJob, validationErr := bqutil.ValidateQueryAgainstAllowedDatasets(ctx, restService, bqClient.Project(), bqClient.Location, historyData, nil, connProps, source, source.GetMaximumBytesBilled(), false)
 			if validationErr != nil {
 				return nil, validationErr
@@ -242,7 +242,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 		historyDataSource, dataCol, timestampCol, horizon, idColsArg)
 
 	// Log the query executed for debugging.
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, sql))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(sql)))
 
 	if len(source.BigQueryAllowedDatasets()) > 0 {
 		_, validationErr := bqutil.ValidateQueryAgainstAllowedDatasets(ctx, restService, bqClient.Project(), bqClient.Location, sql, nil, connProps, source, source.GetMaximumBytesBilled(), false)

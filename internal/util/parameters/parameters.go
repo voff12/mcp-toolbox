@@ -56,6 +56,16 @@ type ParamValue struct {
 	Value any
 }
 
+// Names returns the parameter names. Use it instead of the values in logs:
+// values can be sensitive.
+func (p ParamValues) Names() []string {
+	names := make([]string, 0, len(p))
+	for _, v := range p {
+		names = append(names, v.Name)
+	}
+	return names
+}
+
 // AsSlice returns a slice of the Param's values (in order).
 func (p ParamValues) AsSlice() []any {
 	params := []any{}

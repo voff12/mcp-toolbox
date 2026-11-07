@@ -123,7 +123,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 	if err != nil {
 		return nil, util.NewClientServerError("error getting logger", http.StatusInternalServerError, err)
 	}
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s with format: %s", resourceType, query, format))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s and format: %s", resourceType, util.SQLFingerprint(query), format))
 
 	resp, err := source.RunSQL(ctx, format, query, nil)
 	if err != nil {

@@ -354,7 +354,7 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 			Result:  CallToolResult{Content: []TextContent{text}, IsError: true},
 		}, nil
 	}
-	logger.DebugContext(ctx, fmt.Sprintf("invocation params: %s", params))
+	logger.DebugContext(ctx, fmt.Sprintf("invocation param names: %v", params.Names()))
 
 	params, err = tool.EmbedParams(ctx, params, primitiveMgr)
 	if err != nil {
@@ -392,7 +392,7 @@ func toolsCallHandler(ctx context.Context, id jsonrpc.RequestId, g group.Group, 
 			}
 		}
 		if err != nil {
-			execAttrs = append(execAttrs, attribute.String("error.type", err.Error()))
+			execAttrs = append(execAttrs, attribute.String("error.type", util.ErrorType(err)))
 		}
 		instrumentation.ToolExecutionDuration.Record(ctx, executionDuration, metric.WithAttributes(execAttrs...))
 	}

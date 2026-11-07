@@ -41,6 +41,14 @@ type Instrumentation struct {
 	McpSessionDuration    metric.Float64Histogram
 	McpActiveSessions     metric.Int64UpDownCounter
 	ToolExecutionDuration metric.Float64Histogram
+
+	// Query guard instruments.
+	QueryOutcomes      metric.Int64Counter
+	QueryActive        metric.Int64UpDownCounter
+	QueryQueueDuration metric.Float64Histogram
+	QueryRows          metric.Int64Histogram
+	QueryResultBytes   metric.Int64Histogram
+	QueryDroppedEvents metric.Int64Counter
 }
 
 func CreateTelemetryInstrumentation(versionString string) (*Instrumentation, error) {
@@ -87,6 +95,60 @@ func CreateTelemetryInstrumentation(versionString string) (*Instrumentation, err
 		return nil, fmt.Errorf("unable to create %s metric: %w", toolExecutionDurationName, err)
 	}
 
+	queryOutcomes, err := meter.Int64Counter(
+		"toolbox.query.outcomes",
+		metric.WithDescription("Guarded query invocations by outcome."),
+		metric.WithUnit("{query}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create query outcomes metric: %w", err)
+	}
+
+	queryActive, err := meter.Int64UpDownCounter(
+		"toolbox.query.active",
+		metric.WithDescription("Guarded queries currently running."),
+		metric.WithUnit("{query}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create active queries metric: %w", err)
+	}
+
+	queryQueueDuration, err := meter.Float64Histogram(
+		"toolbox.query.queue.duration",
+		metric.WithDescription("Time guarded queries spent waiting for a slot."),
+		metric.WithUnit("s"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create query queue duration metric: %w", err)
+	}
+
+	queryRows, err := meter.Int64Histogram(
+		"toolbox.query.rows",
+		metric.WithDescription("Rows read per guarded query."),
+		metric.WithUnit("{row}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create query rows metric: %w", err)
+	}
+
+	queryResultBytes, err := meter.Int64Histogram(
+		"toolbox.query.result.size",
+		metric.WithDescription("Bytes read per guarded query."),
+		metric.WithUnit("By"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create query result size metric: %w", err)
+	}
+
+	queryDroppedEvents, err := meter.Int64Counter(
+		"toolbox.query.events.dropped",
+		metric.WithDescription("Query guard log events dropped because the backlog was full."),
+		metric.WithUnit("{event}"),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("unable to create dropped events metric: %w", err)
+	}
+
 	instrumentation := &Instrumentation{
 		Tracer:                tracer,
 		meter:                 meter,
@@ -94,6 +156,12 @@ func CreateTelemetryInstrumentation(versionString string) (*Instrumentation, err
 		McpSessionDuration:    mcpSessionDuration,
 		McpActiveSessions:     mcpActiveSessions,
 		ToolExecutionDuration: toolExecutionDuration,
+		QueryOutcomes:         queryOutcomes,
+		QueryActive:           queryActive,
+		QueryQueueDuration:    queryQueueDuration,
+		QueryRows:             queryRows,
+		QueryResultBytes:      queryResultBytes,
+		QueryDroppedEvents:    queryDroppedEvents,
 	}
 	return instrumentation, nil
 }

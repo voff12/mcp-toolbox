@@ -104,7 +104,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 	if err != nil {
 		return nil, util.NewClientServerError("error getting logger", http.StatusInternalServerError, err)
 	}
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, sqlStr))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(sqlStr)))
 
 	// EXPLAIN (without ANALYZE) only computes the plan; it never executes the
 	// wrapped statement. The hardcoded FORMAT=JSON prefix also makes EXPLAIN

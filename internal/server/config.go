@@ -108,6 +108,9 @@ type ServerConfig struct {
 	EnableDraftSpecs bool
 	// SkipSourceValidation skips source validation during server startup
 	SkipSourceValidation bool
+	// StrictGovernance refuses to start when a tool has no query guard, or
+	// returns row data without masking or authentication.
+	StrictGovernance bool
 	// DisableExt specifies MCP extension URIs disabled on this server.
 	DisableExt []string
 	// DisableExtensionCheck disables client extension capability checks in older MCP protocol versions.

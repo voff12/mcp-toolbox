@@ -133,6 +133,7 @@ Common query parameters for CockroachDB connections:
 | `sslcert` | file path | Path to client certificate |
 | `sslkey` | file path | Path to client key |
 | `application_name` | string | Application name for connection tracking |
+| queryGuard   |      object        |    false     | Limits concurrency, duration and result size. See [Query Guard](../../documentation/configuration/security/query-guard.md). |
 
 ## Advanced Usage
 

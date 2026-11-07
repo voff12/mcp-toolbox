@@ -119,6 +119,7 @@ func NewCommand(opts *internal.ToolboxOptions) *cobra.Command {
 	internal.ConfigFileFlags(cmd, flags, opts)
 	internal.ServeFlags(flags, opts)
 	flags.BoolVar(&opts.Cfg.DisableReload, "disable-reload", false, "Disables dynamic reloading of tools file.")
+	flags.BoolVar(&opts.Cfg.StrictGovernance, "strict-governance", false, "Refuse to start if a tool has no queryGuard limits, or returns row data without resultMasking or authentication.")
 	flags.BoolVar(&opts.Cfg.IgnoreUnknownTools, "ignore-unknown-tools", false, "Log warnings and skip unknown/unsupported tool types instead of failing to start.")
 	flags.IntVar(&opts.Cfg.PollInterval, "poll-interval", 0, "Specifies the polling frequency (seconds) for configuration file updates.")
 	// wrap RunE command so that we have access to original Command object

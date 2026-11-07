@@ -248,8 +248,7 @@ func TestInvoke(t *testing.T) {
 				t.Errorf("expected SQL to contain %q, but got:\n%s", tc.wantSQLSub, src.CalledSQL)
 			}
 			for _, wantLog := range []string{
-				"executing `bigquery-analyze-contribution` tool query: CREATE TEMP MODEL",
-				"executing `bigquery-analyze-contribution` tool query: SELECT * FROM ML.GET_INSIGHTS",
+				"executing `bigquery-analyze-contribution` tool query with fingerprint",
 			} {
 				if !strings.Contains(outBuf.String(), wantLog) {
 					t.Errorf("expected debug log to contain %q, got %q", wantLog, outBuf.String())

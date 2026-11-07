@@ -220,7 +220,7 @@ func TestInvoke(t *testing.T) {
 			if tc.wantSQLSub != "" && !strings.Contains(src.CalledSQL, tc.wantSQLSub) {
 				t.Errorf("expected SQL to contain %q, but got:\n%s", tc.wantSQLSub, src.CalledSQL)
 			}
-			if !strings.Contains(outBuf.String(), "executing `bigquery-forecast` tool query:") {
+			if !strings.Contains(outBuf.String(), "executing `bigquery-forecast` tool query with fingerprint") {
 				t.Errorf("expected debug log to contain forecast query, got %q", outBuf.String())
 			}
 		})

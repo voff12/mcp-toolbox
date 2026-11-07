@@ -200,7 +200,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 		listAllLocksStatement = listAllLocksStatement8plus
 	}
 
-	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query: %s", resourceType, listAllLocksStatement))
+	logger.DebugContext(ctx, fmt.Sprintf("executing `%s` tool query with fingerprint %s", resourceType, util.SQLFingerprint(listAllLocksStatement)))
 	sliceParams := []any{table_schema, table_schema, table_name, table_name, limit}
 	resp, err := source.RunSQL(ctx, listAllLocksStatement, sliceParams)
 	if err != nil {

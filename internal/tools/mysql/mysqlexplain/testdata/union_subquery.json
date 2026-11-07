@@ -1,0 +1,119 @@
+{
+  "query_block": {
+    "union_result": {
+      "using_temporary_table": true,
+      "select_id": 4,
+      "table_name": "<union1,3>",
+      "access_type": "ALL",
+      "query_specifications": [
+        {
+          "dependent": false,
+          "cacheable": true,
+          "query_block": {
+            "select_id": 1,
+            "cost_info": {
+              "query_cost": "2.10"
+            },
+            "nested_loop": [
+              {
+                "table": {
+                  "table_name": "<subquery2>",
+                  "access_type": "ALL",
+                  "attached_condition": "(`<subquery2>`.`customer_id` is not null)",
+                  "materialized_from_subquery": {
+                    "using_temporary_table": true,
+                    "query_block": {
+                      "table": {
+                        "table_name": "orders",
+                        "access_type": "ALL",
+                        "possible_keys": [
+                          "idx_c"
+                        ],
+                        "rows_examined_per_scan": 3,
+                        "rows_produced_per_join": 1,
+                        "filtered": "33.33",
+                        "cost_info": {
+                          "read_cost": "0.45",
+                          "eval_cost": "0.10",
+                          "prefix_cost": "0.55",
+                          "data_read_per_join": "16"
+                        },
+                        "used_columns": [
+                          "customer_id",
+                          "total"
+                        ],
+                        "attached_condition": "(`qg`.`orders`.`total` > 1000)"
+                      }
+                    }
+                  }
+                }
+              },
+              {
+                "table": {
+                  "table_name": "customers",
+                  "access_type": "eq_ref",
+                  "possible_keys": [
+                    "PRIMARY"
+                  ],
+                  "key": "PRIMARY",
+                  "used_key_parts": [
+                    "id"
+                  ],
+                  "key_length": "4",
+                  "ref": [
+                    "<subquery2>.customer_id"
+                  ],
+                  "rows_examined_per_scan": 1,
+                  "rows_produced_per_join": 1,
+                  "filtered": "100.00",
+                  "using_index": true,
+                  "cost_info": {
+                    "read_cost": "0.25",
+                    "eval_cost": "0.10",
+                    "prefix_cost": "2.10",
+                    "data_read_per_join": "736"
+                  },
+                  "used_columns": [
+                    "id"
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        {
+          "dependent": false,
+          "cacheable": true,
+          "query_block": {
+            "select_id": 3,
+            "cost_info": {
+              "query_cost": "0.55"
+            },
+            "table": {
+              "table_name": "orders",
+              "access_type": "index",
+              "key": "idx_c",
+              "used_key_parts": [
+                "customer_id"
+              ],
+              "key_length": "5",
+              "rows_examined_per_scan": 3,
+              "rows_produced_per_join": 3,
+              "filtered": "100.00",
+              "using_index": true,
+              "cost_info": {
+                "read_cost": "0.25",
+                "eval_cost": "0.30",
+                "prefix_cost": "0.55",
+                "data_read_per_join": "48"
+              },
+              "used_columns": [
+                "id"
+              ]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

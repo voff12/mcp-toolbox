@@ -297,7 +297,7 @@ func toolInvokeHandler(s *Server, w http.ResponseWriter, r *http.Request) {
 		_ = render.Render(w, r, newErrResponse(err, http.StatusInternalServerError))
 		return
 	}
-	s.logger.DebugContext(ctx, fmt.Sprintf("invocation params: %s", params))
+	s.logger.DebugContext(ctx, fmt.Sprintf("invocation param names: %v", params.Names()))
 
 	params, err = tool.EmbedParams(ctx, params, s.PrimitiveMgr)
 	if err != nil {

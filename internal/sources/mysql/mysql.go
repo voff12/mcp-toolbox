@@ -17,11 +17,13 @@ package mysql
 import (
 	"context"
 	"database/sql"
+	sqldriver "database/sql/driver"
 	"fmt"
 	"time"
 
 	driver "github.com/go-sql-driver/mysql"
 	"github.com/goccy/go-yaml"
+	"github.com/googleapis/mcp-toolbox/internal/queryguard"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/sources/sqlcommenter"
 	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlcommon"
@@ -31,6 +33,9 @@ import (
 )
 
 const SourceType string = "mysql"
+
+// killTimeout bounds the KILL QUERY sent for a canceled statement.
+const killTimeout = 2 * time.Second
 
 // validate interface
 var _ sources.SourceConfig = Config{}
@@ -60,6 +65,8 @@ type Config struct {
 	QueryTimeout string            `yaml:"queryTimeout"`
 	QueryParams  map[string]string `yaml:"queryParams"`
 	SQLCommenter *bool             `yaml:"sqlCommenter"`
+	// QueryGuard optionally bounds concurrency, duration and result size.
+	QueryGuard *queryguard.Config `yaml:"queryGuard"`
 }
 
 func (r Config) SourceConfigType() string {
@@ -67,7 +74,12 @@ func (r Config) SourceConfigType() string {
 }
 
 func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.Source, error) {
-	pool, err := initMySQLConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, r.QueryParams)
+	guard, err := queryguard.New(r.QueryGuard)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: %w", r.Name, err)
+	}
+
+	pool, err := initMySQLConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, guard.MySQLParams(r.QueryParams))
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -81,15 +93,25 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 	s := &Source{
 		Config: r,
 		Pool:   pool,
+		guard:  guard,
 	}
 	return s, nil
 }
 
-var _ sources.Source = &Source{}
+var (
+	_ sources.Source      = &Source{}
+	_ queryguard.Provider = &Source{}
+)
 
 type Source struct {
 	Config
-	Pool *sql.DB
+	Pool  *sql.DB
+	guard *queryguard.Guard
+}
+
+// GetQueryGuard implements queryguard.Provider.
+func (s *Source) GetQueryGuard() *queryguard.Guard {
+	return s.guard
 }
 
 func (s *Source) IsReadOnly() bool {
@@ -128,9 +150,69 @@ func (s *Source) RetrieveSourceVersion(ctx context.Context) (string, error) {
 	return version, nil
 }
 
+// queryWithKill runs a query on a dedicated connection and sends KILL QUERY if
+// ctx ends first. The driver only closes its socket on cancellation, leaving the
+// statement running, and max_execution_time covers read-only SELECT alone, so
+// this is what stops anything else. It costs one extra round trip per query and
+// needs CONNECTION_ID() to identify the session, so a multiplexing proxy between
+// Toolbox and MySQL would defeat it.
+//
+// The returned func must be called once the rows are closed.
+func (s *Source) queryWithKill(ctx context.Context, statement string, params []any) (*sql.Rows, func(), error) {
+	conn, err := s.MySQLPool().Conn(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+	var id int64
+	if err := conn.QueryRowContext(ctx, "SELECT CONNECTION_ID()").Scan(&id); err != nil {
+		_ = conn.Close()
+		return nil, nil, err
+	}
+
+	killed := make(chan struct{})
+	stopWatching := context.AfterFunc(ctx, func() {
+		defer close(killed)
+		killCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), killTimeout)
+		defer cancel()
+		// id comes from the server and is an integer, so it is safe to format.
+		// Failure means the statement already finished, or the server limit is
+		// left as the backstop; either way the caller already has its error.
+		_, _ = s.MySQLPool().ExecContext(killCtx, fmt.Sprintf("KILL QUERY %d", id))
+	})
+	release := func() {
+		if !stopWatching() {
+			// The kill is in flight. Wait, and discard the connection, so the
+			// id cannot match a later statement once the session is reused.
+			<-killed
+			_ = conn.Raw(func(any) error { return sqldriver.ErrBadConn })
+		}
+		_ = conn.Close()
+	}
+
+	results, err := conn.QueryContext(ctx, statement, params...)
+	if err != nil {
+		release()
+		return nil, nil, err
+	}
+	return results, release, nil
+}
+
 func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (any, error) {
+	ctx, stmt := queryguard.Begin(ctx, statement)
+	defer stmt.End()
+
 	statement = sqlcommenter.PrependComment(ctx, statement, SourceType, s.SQLCommenter)
-	results, err := s.MySQLPool().QueryContext(ctx, statement, params...)
+	var results *sql.Rows
+	var err error
+	if stmt != nil {
+		var release func()
+		results, release, err = s.queryWithKill(ctx, statement, params)
+		if err == nil {
+			defer release()
+		}
+	} else {
+		results, err = s.MySQLPool().QueryContext(ctx, statement, params...)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("unable to execute query: %w", err)
 	}
@@ -158,6 +240,9 @@ func (s *Source) RunSQL(ctx context.Context, statement string, params []any) (an
 		err := results.Scan(values...)
 		if err != nil {
 			return nil, fmt.Errorf("unable to parse row: %w", err)
+		}
+		if err := stmt.Row(queryguard.RowSize(rawValues)); err != nil {
+			return nil, err
 		}
 		row := orderedmap.Row{}
 		for i, name := range cols {

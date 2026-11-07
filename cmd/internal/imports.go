@@ -326,6 +326,7 @@ import (
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mssql/mssqllisttables"
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mssql/mssqlsql"
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlexecutesql"
+	_ "github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlexplain"
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlgetqueryplan"
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqllistactivequeries"
 	_ "github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqllistalllocks"

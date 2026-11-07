@@ -272,7 +272,7 @@ func TestInvokeDatasetRestrictions(t *testing.T) {
 			}
 
 			_, err = tool.Invoke(ctx, testSrc, paramVals, "")
-			wantLog := "executing `bigquery-execute-sql` tool query: " + tc.sql
+			wantLog := "executing `bigquery-execute-sql` tool query with fingerprint " + util.SQLFingerprint(tc.sql)
 			if !strings.Contains(outBuf.String(), wantLog) {
 				t.Errorf("expected debug log to contain %q, got %q", wantLog, outBuf.String())
 			}

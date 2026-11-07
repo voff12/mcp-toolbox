@@ -408,7 +408,7 @@ func TestInvokeLogsDebugQuery(t *testing.T) {
 	if tbErr == nil {
 		t.Fatal("expected error when dry run returns 403 Forbidden, got nil")
 	}
-	wantLog := "executing `bigquery-sql` tool query: SELECT * FROM `my_dataset.my_table` WHERE id = @id"
+	wantLog := "executing `bigquery-sql` tool query with fingerprint " + util.SQLFingerprint("SELECT * FROM `my_dataset.my_table` WHERE id = @id")
 	if !strings.Contains(outBuf.String(), wantLog) {
 		t.Errorf("expected debug log output to contain %q, got %q", wantLog, outBuf.String())
 	}

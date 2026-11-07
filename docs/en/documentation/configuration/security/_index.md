@@ -13,6 +13,10 @@ and sensitive data leakage across the traffic between your users, agents, and to
 
 - **[Model Armor](./model-armor.md):** Defend AI applications against prompt injection,
   jailbreaks, and sensitive data leakage by screening traffic with Google Cloud Model Armor.
+- **[Query Guard](./query-guard.md):** Limit the concurrency, duration and result
+  size of queries on a source.
+- **[Result Masking](./result-masking.md):** Mask sensitive columns in tool results,
+  and refuse any column nobody reviewed.
 - **[Read-Only Tools](./read-only.md):** Enforce deterministic read-only database
   access across custom tools and prebuilt servers using engine-level protocol locks,
   tool suppression, and MCP annotations.

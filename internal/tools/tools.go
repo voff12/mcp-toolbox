@@ -23,6 +23,8 @@ import (
 
 	yaml "github.com/goccy/go-yaml"
 	"github.com/googleapis/mcp-toolbox/internal/embeddingmodels"
+	"github.com/googleapis/mcp-toolbox/internal/queryguard"
+	"github.com/googleapis/mcp-toolbox/internal/resultmask"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/util"
 	"github.com/googleapis/mcp-toolbox/internal/util/parameters"
@@ -179,6 +181,25 @@ func IsAuthorized(authRequiredSources []string, verifiedAuthServices []string) b
 	return false
 }
 
+// MaskableConfig is implemented by tool configs that can use `resultMasking`.
+// CheckResultMasking returns an error when this configuration cannot, which is
+// the case when callers can influence the SQL: they could rename any column.
+type MaskableConfig interface {
+	CheckResultMasking() error
+}
+
+// ToolBinder is implemented by tool configs that are built on another tool. The
+// server calls BindTools before Initialize and uses the returned config.
+type ToolBinder interface {
+	BindTools(all map[string]ToolConfig) (ToolConfig, error)
+}
+
+// GovernedOutputConfig marks tool configs whose output never carries row data,
+// so strict mode does not require them to mask or authenticate.
+type GovernedOutputConfig interface {
+	GovernedOutput()
+}
+
 // ToolMeta is the read-only view BaseTool needs of any tool's Config. Tools
 // satisfy it for free by embedding ConfigBase.
 type ToolMeta interface {
@@ -215,12 +236,23 @@ type ConfigBase struct {
 	ScopesRequired []string         `yaml:"scopesRequired"`
 	Annotations    *ToolAnnotations `yaml:"annotations,omitempty"`
 	UI             *ToolUIMetadata  `yaml:"ui,omitempty"`
+	// QueryGuard optionally tightens the limits of the tool's source.
+	QueryGuard *queryguard.ToolConfig `yaml:"queryGuard,omitempty"`
+	// ResultMasking rewrites result columns before they leave the server. Tool
+	// types opt in through MaskableConfig.
+	ResultMasking *resultmask.Config `yaml:"resultMasking,omitempty"`
 }
 
 func (c ConfigBase) GetName() string             { return c.Name }
 func (c ConfigBase) GetDescription() string      { return c.Description }
 func (c ConfigBase) GetAuthRequired() []string   { return c.AuthRequired }
 func (c ConfigBase) GetScopesRequired() []string { return c.ScopesRequired }
+func (c ConfigBase) GetQueryGuardConfig() *queryguard.ToolConfig {
+	return c.QueryGuard
+}
+func (c ConfigBase) GetResultMaskingConfig() *resultmask.Config {
+	return c.ResultMasking
+}
 func (c ConfigBase) GetToolUIMetadata() *ToolUIMetadata {
 	if c.UI == nil {
 		return nil

@@ -64,6 +64,14 @@ func (cfg Config) ToolConfigType() string {
 	return resourceType
 }
 
+// CheckResultMasking implements tools.MaskableConfig.
+func (cfg Config) CheckResultMasking() error {
+	if len(cfg.TemplateParameters) > 0 {
+		return fmt.Errorf("resultMasking cannot be used with templateParameters: callers could change the returned columns")
+	}
+	return nil
+}
+
 func (cfg Config) Initialize(context.Context) (tools.Tool, error) {
 	if cfg.Description == "" {
 		return nil, fmt.Errorf("description is required for tool %q", cfg.Name)

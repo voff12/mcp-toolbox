@@ -20,6 +20,7 @@ import (
 	"net/http"
 
 	yaml "github.com/goccy/go-yaml"
+	"github.com/googleapis/mcp-toolbox/internal/queryguard"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/sources/alloydbpg"
 	"github.com/googleapis/mcp-toolbox/internal/sources/cloudsqlpg"
@@ -128,7 +129,7 @@ func (t Tool) Invoke(ctx context.Context, s sources.Source, params parameters.Pa
 	}
 	sliceParams := newParams.AsSlice()
 
-	results, err := source.PostgresPool().Query(ctx, listStoredProcedure, sliceParams...)
+	results, err := queryguard.QueryPgx(ctx, source.PostgresPool(), listStoredProcedure, listStoredProcedure, sliceParams...)
 	if err != nil {
 		return nil, util.ProcessGeneralError(err)
 	}

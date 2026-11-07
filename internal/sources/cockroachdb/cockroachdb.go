@@ -27,6 +27,7 @@ import (
 
 	crdbpgx "github.com/cockroachdb/cockroach-go/v2/crdb/crdbpgxv5"
 	"github.com/goccy/go-yaml"
+	"github.com/googleapis/mcp-toolbox/internal/queryguard"
 	"github.com/googleapis/mcp-toolbox/internal/sources"
 	"github.com/googleapis/mcp-toolbox/internal/util"
 	"github.com/jackc/pgx/v5"
@@ -87,6 +88,11 @@ type Config struct {
 	MaxRowLimit     int  `yaml:"maxRowLimit"`     // Default: 1000
 	QueryTimeoutSec int  `yaml:"queryTimeoutSec"` // Default: 30
 
+	// QueryGuard optionally bounds concurrency, duration and result size. When
+	// set it replaces MaxRowLimit: exceeding maxRows fails the query rather than
+	// silently truncating it with a LIMIT clause.
+	QueryGuard *queryguard.Config `yaml:"queryGuard"`
+
 	// Observability
 	EnableTelemetry  bool   `yaml:"enableTelemetry"`  // Default: true
 	TelemetryVerbose bool   `yaml:"telemetryVerbose"` // Default: false
@@ -103,7 +109,12 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 		return nil, fmt.Errorf("invalid retryBaseDelay: %w", err)
 	}
 
-	pool, err := initCockroachDBConnectionPoolWithRetry(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryParams, r.MaxRetries, retryBaseDelay)
+	guard, err := queryguard.New(r.QueryGuard)
+	if err != nil {
+		return nil, fmt.Errorf("source %q: %w", r.Name, err)
+	}
+
+	pool, err := initCockroachDBConnectionPoolWithRetry(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, guard.PostgresParams(r.QueryParams), r.MaxRetries, retryBaseDelay)
 	if err != nil {
 		return nil, fmt.Errorf("unable to create pool: %w", err)
 	}
@@ -111,15 +122,25 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 	s := &Source{
 		Config: r,
 		Pool:   pool,
+		guard:  guard,
 	}
 	return s, nil
 }
 
-var _ sources.Source = &Source{}
+var (
+	_ sources.Source      = &Source{}
+	_ queryguard.Provider = &Source{}
+)
 
 type Source struct {
 	Config
-	Pool *pgxpool.Pool
+	Pool  *pgxpool.Pool
+	guard *queryguard.Guard
+}
+
+// GetQueryGuard implements queryguard.Provider.
+func (s *Source) GetQueryGuard() *queryguard.Guard {
+	return s.guard
 }
 
 func (s *Source) IsReadOnly() bool {
@@ -159,12 +180,16 @@ func (s *Source) Query(ctx context.Context, sql string, args ...interface{}) (pg
 	}
 
 	// MCP Security Check 2: Apply query limits (row limit)
-	modifiedSQL, err := s.ApplyQueryLimits(sql)
-	if err != nil {
-		return nil, err
+	modifiedSQL := sql
+	if s.guard == nil {
+		var err error
+		modifiedSQL, err = s.ApplyQueryLimits(sql)
+		if err != nil {
+			return nil, err
+		}
 	}
 
-	return s.Pool.Query(ctx, modifiedSQL, args...)
+	return queryguard.QueryPgx(ctx, s.Pool, sql, modifiedSQL, args...)
 }
 
 // ============================================================================
