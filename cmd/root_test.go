@@ -44,7 +44,7 @@ import (
 func withDefaults(c server.ServerConfig) server.ServerConfig {
 	data, _ := os.ReadFile("version.txt")
 	version := strings.TrimSpace(string(data)) // Preserving 'data', new var for clarity
-	c.Version = version + "+" + strings.Join([]string{"dev", runtime.GOOS, runtime.GOARCH}, ".")
+	c.Version = version + "+" + strings.Join([]string{distribution, "dev", runtime.GOOS, runtime.GOARCH}, ".")
 
 	if c.Address == "" {
 		c.Address = "127.0.0.1"
@@ -141,7 +141,7 @@ func TestVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("failed to read version.txt: %v", err)
 	}
-	want := strings.TrimSpace(string(data))
+	want := strings.TrimSpace(string(data)) + "+Zhiyue."
 
 	_, _, got, err := invokeCommand([]string{"--version"})
 	if err != nil {

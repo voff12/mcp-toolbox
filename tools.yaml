@@ -1,0 +1,53 @@
+kind: source
+name: shop
+type: mysql
+host: 127.0.0.1
+port: "3306"
+database: shop
+user: toolbox_ro
+password: ${DB_PASSWORD}
+identityCheck: read-only
+
+queryGuard:
+  maxConcurrent: 4
+  maxQueue: 20
+  queueTimeout: 500ms
+  queryTimeout: 6s
+  statementTimeout: 4s
+  lockTimeout: 1s
+  maxRows: 500
+  maxResultBytes: 2MiB
+---
+kind: tool
+name: query_customers
+type: mysql-sql
+source: shop
+description: 按等级查询客户，返回脱敏结果
+statement: >
+  SELECT id, customer_name, phone
+  FROM customers
+  WHERE level = ?
+  ORDER BY id
+  LIMIT 200
+parameters:
+  - name: level
+    type: string
+    description: 客户等级
+
+resultMasking:
+  allow: [id]
+  rules:
+    - {column: customer_name, action: keep, first: 1}
+    - {column: phone, action: keep, first: 3, last: 4, replacement: "****"}
+---
+kind: tool
+name: explain_query_customers
+type: mysql-explain
+tool: query_customers
+description: 查看该查询的执行计划
+---
+kind: tool
+name: recommend_indexes
+type: mysql-recommend-indexes
+tool: query_customers
+description: 为该查询提供索引建议

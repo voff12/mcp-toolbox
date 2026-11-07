@@ -47,6 +47,11 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// distribution marks this build as the Zhiyue distribution rather than the
+// upstream release. It stays in the build metadata because version.txt must
+// remain the plain number that release tooling and update checks compare.
+const distribution = "Zhiyue"
+
 var (
 	// versionString stores the full semantic version, including build metadata.
 	versionString string
@@ -65,7 +70,7 @@ func init() {
 
 // semanticVersion returns the version of the CLI including a compile-time metadata.
 func semanticVersion() string {
-	metadataStrings := []string{buildType, runtime.GOOS, runtime.GOARCH}
+	metadataStrings := []string{distribution, buildType, runtime.GOOS, runtime.GOARCH}
 	if commitSha != "" {
 		metadataStrings = append(metadataStrings, commitSha)
 	}
