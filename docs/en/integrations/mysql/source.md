@@ -65,3 +65,4 @@ instead of hardcoding your secrets into the configuration file.
 | queryParams  | map<string,string> |    false     | Arbitrary DSN parameters passed to the driver (e.g. `tls: preferred`, `charset: utf8mb4`). Useful for enabling TLS or other connection options. |
 | sqlCommenter |      boolean       |    false     | Overrides the global `--sql-commenter` flag for this source. When set, it takes priority; when omitted, the global flag applies.                 |
 | queryGuard   |      object        |    false     | Limits concurrency, duration and result size. See [Query Guard](../../documentation/configuration/security/query-guard.md). |
+| identityCheck      |  string  |    false     | Set to `read-only` to refuse an account that can write or log in from any host. See [MySQL Deployment Boundary](../../documentation/deploy-to/mysql-boundary/_index.md). |

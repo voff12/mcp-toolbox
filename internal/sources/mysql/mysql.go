@@ -67,6 +67,9 @@ type Config struct {
 	SQLCommenter *bool             `yaml:"sqlCommenter"`
 	// QueryGuard optionally bounds concurrency, duration and result size.
 	QueryGuard *queryguard.Config `yaml:"queryGuard"`
+	// IdentityCheck refuses to start unless the database account is what the
+	// deployment boundary expects. The only value is "read-only".
+	IdentityCheck string `yaml:"identityCheck"`
 }
 
 func (r Config) SourceConfigType() string {
@@ -78,6 +81,9 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 	if err != nil {
 		return nil, fmt.Errorf("source %q: %w", r.Name, err)
 	}
+	if r.IdentityCheck != "" && r.IdentityCheck != identityReadOnly {
+		return nil, fmt.Errorf("source %q: identityCheck must be %q", r.Name, identityReadOnly)
+	}
 
 	pool, err := initMySQLConnectionPool(ctx, tracer, r.Name, r.Host, r.Port, r.User, r.Password, r.Database, r.QueryTimeout, guard.MySQLParams(r.QueryParams))
 	if err != nil {
@@ -88,6 +94,13 @@ func (r Config) Initialize(ctx context.Context, tracer trace.Tracer) (sources.So
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("unable to connect successfully: %w", err)
+	}
+
+	if r.IdentityCheck == identityReadOnly {
+		if err := verifyReadOnlyIdentity(ctx, pool); err != nil {
+			pool.Close()
+			return nil, fmt.Errorf("source %q: %w", r.Name, err)
+		}
 	}
 
 	s := &Source{

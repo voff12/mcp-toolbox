@@ -53,6 +53,7 @@ type Guard struct {
 	waiting atomic.Int64
 	// pendingEvents bounds in-flight asynchronous log writes.
 	pendingEvents chan struct{}
+	stats         statTable
 }
 
 // New builds a Guard. A nil config returns a nil Guard.
@@ -88,6 +89,7 @@ func (g *Guard) Invoke(parent context.Context, call Call, p Policy, fn func(cont
 		ev.DBMs = time.Duration(exec.dbNanos.Load()).Milliseconds()
 		ev.Rows = exec.rows.Load()
 		ev.Bytes = exec.bytes.Load()
+		g.stats.record(ev)
 		g.emit(parent, ev, p)
 	}()
 

@@ -83,14 +83,11 @@ func (cfg Config) GovernedOutput() {}
 
 // BindTools implements tools.ToolBinder.
 func (cfg Config) BindTools(all map[string]tools.ToolConfig) (tools.ToolConfig, error) {
-	target, ok := all[cfg.Tool].(mysqlsql.Config)
-	if !ok {
-		return nil, fmt.Errorf("tool %q must be a configured mysql-sql tool", cfg.Tool)
+	target, err := Target(all, cfg.Tool)
+	if err != nil {
+		return nil, err
 	}
-	if len(target.TemplateParameters) > 0 {
-		return nil, fmt.Errorf("tool %q uses templateParameters, so its statement is not fixed", cfg.Tool)
-	}
-	cfg.target = &target
+	cfg.target = target
 	// A plan reveals schema, so by default it needs what the statement needs.
 	if len(cfg.AuthRequired) == 0 {
 		cfg.AuthRequired = target.AuthRequired
@@ -99,6 +96,19 @@ func (cfg Config) BindTools(all map[string]tools.ToolConfig) (tools.ToolConfig, 
 		cfg.ScopesRequired = target.ScopesRequired
 	}
 	return cfg, nil
+}
+
+// Target resolves the mysql-sql tool a plan-based tool is bound to. Its
+// statement must be fixed, or a plan would not describe what agents run.
+func Target(all map[string]tools.ToolConfig, name string) (*mysqlsql.Config, error) {
+	target, ok := all[name].(mysqlsql.Config)
+	if !ok {
+		return nil, fmt.Errorf("tool %q must be a configured mysql-sql tool", name)
+	}
+	if len(target.TemplateParameters) > 0 {
+		return nil, fmt.Errorf("tool %q uses templateParameters, so its statement is not fixed", name)
+	}
+	return &target, nil
 }
 
 func (cfg Config) Initialize(context.Context) (tools.Tool, error) {
@@ -171,6 +181,8 @@ type Summary struct {
 	UsingFilesort  bool          `json:"usingFilesort"`
 	UsingTemporary bool          `json:"usingTemporary"`
 	Tables         []TableAccess `json:"tables"`
+
+	nodes []map[string]any
 }
 
 // TableAccess describes how one table is read. Filter conditions are omitted
@@ -188,32 +200,62 @@ type TableAccess struct {
 }
 
 func summaryFromRows(result any) (Summary, error) {
+	plan, err := PlanText(result)
+	if err != nil {
+		return Summary{}, err
+	}
+	return summarize(plan)
+}
+
+// PlanText extracts the plan from the rows of an EXPLAIN FORMAT=JSON statement.
+// The text can contain parameter values and must not reach the caller.
+func PlanText(result any) (string, error) {
 	rows, ok := result.([]any)
 	if !ok || len(rows) == 0 {
-		return Summary{}, fmt.Errorf("no query plan returned")
+		return "", fmt.Errorf("no query plan returned")
 	}
 	row, ok := rows[0].(orderedmap.Row)
 	if !ok || len(row.Columns) == 0 {
-		return Summary{}, fmt.Errorf("no query plan returned in row")
+		return "", fmt.Errorf("no query plan returned in row")
 	}
 	plan, ok := row.Columns[0].Value.(string)
 	if !ok {
-		return Summary{}, fmt.Errorf("unexpected query plan type")
+		return "", fmt.Errorf("unexpected query plan type")
 	}
-	return summarize(plan)
+	return plan, nil
+}
+
+// TableNodes returns the raw node of each table in a plan. Unlike Summary,
+// nodes include conditions, so they can contain parameter values.
+func TableNodes(plan string) ([]map[string]any, error) {
+	block, err := parseBlock(plan)
+	if err != nil {
+		return nil, err
+	}
+	s := Summary{}
+	s.walk(block)
+	return s.nodes, nil
+}
+
+func parseBlock(plan string) (map[string]any, error) {
+	var root map[string]any
+	if err := json.Unmarshal([]byte(plan), &root); err != nil {
+		return nil, fmt.Errorf("unable to parse query plan")
+	}
+	block, ok := root["query_block"].(map[string]any)
+	if !ok {
+		// Version 2, selected by explain_json_format_version, has another shape.
+		return nil, fmt.Errorf("unsupported query plan format")
+	}
+	return block, nil
 }
 
 // summarize reads format version 1 of EXPLAIN FORMAT=JSON. Errors must not
 // include the plan.
 func summarize(plan string) (Summary, error) {
-	var root map[string]any
-	if err := json.Unmarshal([]byte(plan), &root); err != nil {
-		return Summary{}, fmt.Errorf("unable to parse query plan")
-	}
-	block, ok := root["query_block"].(map[string]any)
-	if !ok {
-		// Version 2, selected by explain_json_format_version, has another shape.
-		return Summary{}, fmt.Errorf("unsupported query plan format")
+	block, err := parseBlock(plan)
+	if err != nil {
+		return Summary{}, err
 	}
 	s := Summary{Tables: []TableAccess{}}
 	if cost, ok := block["cost_info"].(map[string]any); ok {
@@ -240,6 +282,7 @@ func (s *Summary) walk(node any) {
 		}
 		if t, ok := n["table"].(map[string]any); ok {
 			s.Tables = append(s.Tables, tableAccess(t))
+			s.nodes = append(s.nodes, t)
 		}
 		for _, k := range slices.Sorted(maps.Keys(n)) {
 			s.walk(n[k])

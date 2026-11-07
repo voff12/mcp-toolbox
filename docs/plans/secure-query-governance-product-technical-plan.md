@@ -1,6 +1,6 @@
 # Toolbox MCP 安全查询与数据库稳定性治理产品技术方案
 
-> 方案版本：v1.3（阶段一、二已在 `feat/query-guard` 分支实现，MySQL 优先；变更见第 15 至 17 节）  
+> 方案版本：v1.4（阶段一、二已合入 `main`；阶段三、四仅实现 MySQL，见 `feat/mysql-governance-boundary` 分支；变更见第 15 至 18 节）  
 > 适用对象：产品、Toolbox 服务端、数据库、平台安全、SRE 与 Agent 应用团队  
 > 目标：在保留自然语言数据查询能力的同时，实现敏感数据不泄露、慢查询可止损、性能问题可分析、数据库访问不可绕过。
 
@@ -542,3 +542,34 @@ v1.1 根据对仓库代码和驱动源码（pgx v5.10.0、go-sql-driver/mysql v1
 - `authRequired` 只证明调用方通过认证，不证明其为管理员。严格模式放行的是“已认证”，角色划分仍依赖工具集与授权配置。
 - 脱敏无法阻止推断：过滤参数可用于确认某个值是否存在。
 - `cloud-sql-mysql` 等 MySQL 兼容 Source 未适配 `queryGuard`，因此也无法使用脱敏。
+
+## 18. 阶段三、四实施状态（v1.4）
+
+依据决策，两个阶段仅实现 MySQL。
+
+### 阶段三
+
+- **数据库身份**：`mysql` Source 新增 `identityCheck: read-only`，启动及热加载时检查 `CURRENT_USER()` 与 `SHOW GRANTS`，采用白名单，未识别的权限、角色和部分撤销均拒绝。
+- **参考部署**：`deploy/mysql-boundary/` 提供双内部网络的 Compose 环境，`verify.sh` 在具备 Shell 的 Agent 容器内实际执行绕过尝试，覆盖第 13.3 节各项并含探测对照。
+- **使用手册**：`docs/en/documentation/deploy-to/mysql-boundary/`。
+
+未完成：
+
+- Kubernetes NetworkPolicy 仅为示例，未实测。真实云环境的安全组、IAM 认证和私有服务通道需在目标环境落地。
+- 第 7.2 节的检测只提供基于 `performance_schema.accounts` 的巡检 SQL，告警需接入数据库审计日志。
+- `--strict-governance` 不强制 `identityCheck`，以免拒绝其他数据库类型的工具。
+- 按调用方限流未实现：`callerService` 仍为 `unknown`。
+
+### 阶段四
+
+- **与方案的差异（重要）**：方案假设可复用 `performance_schema` 摘要做聚合。实测 MySQL 8.4.13 中，二进制协议执行的语句计入 `statement/com/Execute`，但不进入 `events_statements_summary_by_digest`。带 `parameters` 的工具都走二进制协议，因此摘要表看不到它们，现有 `mysql-show-query-stats` 有同样盲区。未采用 `interpolateParams=true`，以保留服务端参数绑定。改为由 QueryGuard 在内存中按工具和 SQL 指纹聚合。
+- **慢查询报告**：`mysql-slow-query-report` 同时给出 Toolbox 实测与服务端摘要两个视角。
+- **索引建议**：`mysql-recommend-indexes` 绑定 `mysql-sql` 工具，基于计划输出证据、建议 DDL、回滚 DDL 与预估体积，状态固定为 `requires_dba_approval`。工具只读，不存在执行 DDL 的路径，符合第 10 节“禁止向模型开放自动 `CREATE INDEX`”。列名须存在于目标表才会输出，因此不会携带条件中的取值。
+
+未完成：
+
+- Toolbox 统计仅在内存中，随 Source 重载或进程重启清零，且每个实例独立。跨实例聚合需依赖已输出的日志和指标。
+- 审批流程未产品化：工具只给出状态，审批记录在 Toolbox 之外完成。
+- 索引建议只考虑过滤条件，不覆盖排序、Join、覆盖索引。等值列的先后顺序未按选择性优化。
+- 执行 EXPLAIN ANALYZE 的前后对比未提供，第 10 节第 6 步需由 DBA 在测试环境完成。
+- 可选的受控异步查询未实现。

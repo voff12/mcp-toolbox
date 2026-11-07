@@ -23,6 +23,7 @@ import (
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
+	"github.com/google/go-cmp/cmp/cmpopts"
 	"github.com/googleapis/mcp-toolbox/internal/tools"
 	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlsql"
 	"github.com/googleapis/mcp-toolbox/internal/util/orderedmap"
@@ -61,7 +62,7 @@ func TestSummarizeJoin(t *testing.T) {
 			},
 		},
 	}
-	if diff := cmp.Diff(want, got); diff != "" {
+	if diff := cmp.Diff(want, got, cmpopts.IgnoreUnexported(Summary{})); diff != "" {
 		t.Fatal(diff)
 	}
 }

@@ -25,6 +25,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -37,6 +38,8 @@ import (
 	"github.com/googleapis/mcp-toolbox/internal/sources/postgres"
 	"github.com/googleapis/mcp-toolbox/internal/tools"
 	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlexplain"
+	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlrecommendindexes"
+	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlslowqueryreport"
 	"github.com/googleapis/mcp-toolbox/internal/tools/mysql/mysqlsql"
 	"github.com/googleapis/mcp-toolbox/internal/util"
 	"github.com/googleapis/mcp-toolbox/internal/util/parameters"
@@ -218,13 +221,29 @@ func mysqlRunner(t *testing.T, c *queryguard.Config) runner {
 
 func mysqlSource(t *testing.T, c *queryguard.Config) *mysql.Source {
 	t.Helper()
+	return mysqlSourceIn(t, c, "mysql")
+}
+
+// mysqlAppSource connects to an application schema. Digest reports skip system
+// schemas, so a session in `mysql` would not show up in them.
+func mysqlAppSource(t *testing.T, c *queryguard.Config) *mysql.Source {
+	t.Helper()
+	s := mysqlSource(t, c)
+	if _, err := s.Pool.ExecContext(context.Background(), "CREATE DATABASE IF NOT EXISTS qg_app"); err != nil {
+		t.Fatal(err)
+	}
+	return mysqlSourceIn(t, c, "qg_app")
+}
+
+func mysqlSourceIn(t *testing.T, c *queryguard.Config, database string) *mysql.Source {
+	t.Helper()
 	host := os.Getenv("QUERYGUARD_MYSQL_HOST")
 	if host == "" {
 		t.Skip("QUERYGUARD_MYSQL_HOST not set")
 	}
 	cfg := mysql.Config{
 		Name: "my", Type: "mysql", Host: host, Port: "3306", User: "root",
-		Password: "test", Database: "mysql", QueryGuard: c,
+		Password: "test", Database: database, QueryGuard: c,
 	}
 	src, err := cfg.Initialize(initContext(), noop.NewTracerProvider().Tracer(""))
 	if err != nil {
@@ -674,5 +693,192 @@ func TestMySQLExplainDoesNotWrite(t *testing.T) {
 	}
 	if n != 3 {
 		t.Fatalf("rows = %d, EXPLAIN must not execute the statement", n)
+	}
+}
+
+// analysisTable creates a table large enough to be worth indexing, using
+// repeated doubling, and runs the query under test so it appears in digests.
+func analysisTable(t *testing.T, s *mysql.Source) {
+	t.Helper()
+	ctx := context.Background()
+	for _, q := range []string{
+		"DROP TABLE IF EXISTS qg_big",
+		"CREATE TABLE qg_big (id INT PRIMARY KEY AUTO_INCREMENT, phone VARCHAR(20), status VARCHAR(10), notes TEXT)",
+		"INSERT INTO qg_big (phone, status, notes) VALUES ('" + plantedPhone + "', 'new', 'x')",
+	} {
+		if _, err := s.Pool.ExecContext(ctx, q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for range 13 {
+		if _, err := s.Pool.ExecContext(ctx, "INSERT INTO qg_big (phone, status, notes) SELECT CONCAT('1', FLOOR(RAND() * 1e10)), 'old', 'x' FROM qg_big"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Pool.ExecContext(ctx, "ANALYZE TABLE qg_big"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func recommendTool(t *testing.T, statement string, params parameters.Parameters) tools.Tool {
+	t.Helper()
+	target := mysqlsql.Config{
+		ConfigBase: tools.ConfigBase{Name: "query", Description: "d"},
+		Type:       "mysql-sql", Source: "my", Statement: statement, Parameters: params,
+	}
+	cfg := mysqlrecommendindexes.Config{
+		ConfigBase: tools.ConfigBase{Name: "recommend", Description: "d"},
+		Type:       "mysql-recommend-indexes", Tool: "query",
+	}
+	bound, err := cfg.BindTools(map[string]tools.ToolConfig{"query": target})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tool, err := bound.Initialize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tool
+}
+
+func guarded(t *testing.T, r runner, fn func(context.Context) (any, util.ToolboxError)) any {
+	t.Helper()
+	res, err := r.guard.Invoke(initContext(), queryguard.Call{Tool: "analysis", Source: "my"}, r.policy(t), fn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func TestMySQLRecommendIndexes(t *testing.T) {
+	s := mysqlAppSource(t, baseConfig())
+	r := mysqlRunnerFor(s)
+	analysisTable(t, s)
+
+	const statement = "SELECT id FROM qg_big b WHERE b.phone = ? AND b.status = ? AND b.notes = 'x'"
+	// Bound parameters use the binary protocol, which server digests do not count,
+	// so these calls can only be found through what Toolbox measured.
+	call := queryguard.Call{Tool: "query", Source: "my"}
+	for range 3 {
+		if _, err := r.guard.Invoke(initContext(), call, r.policy(t), func(ctx context.Context) (any, util.ToolboxError) {
+			if _, err := s.RunSQL(ctx, statement, []any{plantedPhone, "new"}); err != nil {
+				return nil, util.NewAgentError("query failed", err)
+			}
+			return []any{}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tool := recommendTool(t, statement, parameters.Parameters{
+		parameters.NewStringParameter("phone", "phone"),
+		parameters.NewStringParameter("status", "status"),
+	})
+	params := parameters.ParamValues{{Name: "phone", Value: plantedPhone}, {Name: "status", Value: "new"}}
+	res := guarded(t, r, func(ctx context.Context) (any, util.ToolboxError) { return tool.Invoke(ctx, s, params, "") })
+
+	b, err := json.Marshal(res)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("report: %s", b)
+	if strings.Contains(string(b), plantedPhone) {
+		t.Fatalf("value leaked: %s", b)
+	}
+	report := res.(mysqlrecommendindexes.Report)
+	if len(report.Recommendations) != 1 {
+		t.Fatalf("recommendations: %s", b)
+	}
+	rec := report.Recommendations[0]
+	// Both are equality filters, so their relative order is not significant.
+	cols := slices.Sorted(slices.Values(rec.Columns))
+	if rec.Table != "qg_big" || strings.Join(cols, ",") != "phone,status" {
+		t.Fatalf("got %+v: TEXT columns must be skipped and the alias resolved", rec)
+	}
+	if rec.Status != "requires_dba_approval" {
+		t.Errorf("status = %q", rec.Status)
+	}
+	if report.Digest == "" {
+		t.Errorf("no digest: %s", b)
+	}
+	if report.Runtime == nil || report.Runtime.Calls != 3 || report.Runtime.MeasuredBy != "toolbox" {
+		t.Errorf("runtime statistics not found: %s", b)
+	}
+
+	// The tool only suggests. No index may appear until a person adds it.
+	var n int
+	if err := s.Pool.QueryRow("SELECT COUNT(*) FROM information_schema.statistics WHERE table_name = 'qg_big' AND index_name <> 'PRIMARY'").Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatalf("%d indexes were created", n)
+	}
+
+	// The suggested DDL must be valid, and must actually fix the plan.
+	if _, err := s.Pool.Exec(rec.SuggestedDDL); err != nil {
+		t.Fatalf("suggested DDL failed: %v", err)
+	}
+	after := guarded(t, r, func(ctx context.Context) (any, util.ToolboxError) { return tool.Invoke(ctx, s, params, "") })
+	if got := after.(mysqlrecommendindexes.Report).Recommendations; len(got) != 0 {
+		t.Fatalf("still recommended after applying: %+v", got)
+	}
+	if _, err := s.Pool.Exec(rec.RollbackDDL); err != nil {
+		t.Fatalf("rollback DDL failed: %v", err)
+	}
+}
+
+func TestMySQLSlowQueryReport(t *testing.T) {
+	s := mysqlAppSource(t, baseConfig())
+	r := mysqlRunnerFor(s)
+	analysisTable(t, s)
+	statement := "SELECT COUNT(*) FROM qg_big WHERE phone = '" + plantedPhone + "'"
+	for range 3 {
+		if _, err := s.RunSQL(initContext(), statement, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const parameterized = "SELECT id FROM qg_big WHERE phone = ?"
+	for range 3 {
+		if _, err := r.guard.Invoke(initContext(), queryguard.Call{Tool: "bound_tool", Source: "my"}, r.policy(t), func(ctx context.Context) (any, util.ToolboxError) {
+			if _, err := s.RunSQL(ctx, parameterized, []any{plantedPhone}); err != nil {
+				return nil, util.NewAgentError("query failed", err)
+			}
+			return []any{}, nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	bound, err := mysqlslowqueryreport.Config{
+		ConfigBase: tools.ConfigBase{Name: "report"}, Type: "mysql-slow-query-report", Source: "my",
+	}.Initialize(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	params := parameters.ParamValues{{Name: "database", Value: "qg_app"}, {Name: "limit", Value: 50}}
+	res := guarded(t, r, func(ctx context.Context) (any, util.ToolboxError) { return bound.Invoke(ctx, s, params, "") })
+	b, jsonErr := json.Marshal(res)
+	if jsonErr != nil {
+		t.Fatal(jsonErr)
+	}
+	t.Logf("report: %.900s", b)
+	if strings.Contains(string(b), plantedPhone) {
+		t.Fatalf("literal leaked: %.400s", b)
+	}
+	if !strings.Contains(string(b), "qg_big") || !strings.Contains(string(b), "full_scan") || !strings.Contains(string(b), "low_row_efficiency") {
+		t.Fatalf("statement or findings missing: %.800s", b)
+	}
+	for _, field := range []string{`"p95_ms"`, `"digest"`, `"calls"`} {
+		if !strings.Contains(string(b), field) {
+			t.Fatalf("%s missing: %.400s", field, b)
+		}
+	}
+	// The whole reason for the toolbox section: this statement is parameterized.
+	found := false
+	for _, st := range res.(mysqlslowqueryreport.Report).Toolbox {
+		if st.Tool == "bound_tool" {
+			found = st.Calls == 3
+		}
+	}
+	if !found {
+		t.Fatalf("parameterized tool not reported: %.600s", b)
 	}
 }
